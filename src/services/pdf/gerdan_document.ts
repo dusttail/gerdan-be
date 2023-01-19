@@ -59,17 +59,13 @@ export class GerdanDocument {
         this.denominator = this.calculateDenominator(gerdan.width);
         this.pixelSize = this.calculatePixelSize(gerdan.width);
         this.grid = this.createGridMapFromPixels(gerdan.pixels);
-
-        // this.statistics = this.collectStatistic(this.grid);
+        this.statistics = this.collectStatistic(this.grid);
 
         this.createDocument({ Title: gerdan.name, Author: user.username });
         this.addInfoPage(user, gerdan);
+        this.drawStatistics();
         this.drawGrid(this.grid);
         this.closeDocument();
-    }
-
-    public getFilePath(): string {
-        return this.filePath;
     }
 
     public async getFile(): Promise<Buffer> {
@@ -126,27 +122,26 @@ export class GerdanDocument {
         return grid;
     }
 
-    // private collectStatistic(grid: Grid): Statistics {
-    //     const statistics = {
-    //         rows: 0,
-    //         columns: 0,
-    //         colors: []
-    //     };
+    private collectStatistic(grid: Grid): Statistics {
+        const statistics = {
+            rows: 0,
+            columns: 0,
+            colors: []
+        };
 
-    //     for (const line of grid) {
-    //         let pixelsInARow = 0;
-    //         for (const pixel of line) {
-    //             if (!pixel?.index) break;
-    //             if (!statistics.colors[pixel.index]) statistics.colors[pixel.index] = { color: pixel.color, count: 1 };
-    //             statistics.colors[pixel.index].count++;
-    //             pixelsInARow++;
-    //         }
-    //         statistics.rows++;
-    //         if (statistics.columns < pixelsInARow) statistics.columns = pixelsInARow;
-    //     }
+        for (const [_x, row] of grid) {
+            let pixelsInARow = 0;
+            for (const [_y, cell] of row) {
+                if (!statistics.colors[cell.index]) statistics.colors[cell.index] = { color: cell.color, count: 1 };
+                statistics.colors[cell.index].count++;
+                pixelsInARow++;
+            }
+            statistics.rows++;
+            if (statistics.columns < pixelsInARow) statistics.columns = pixelsInARow;
+        }
 
-    //     return statistics;
-    // }
+        return statistics;
+    }
 
     private addInfoPage(user: User, gerdan: Gerdan) {
         this.doc
@@ -157,8 +152,6 @@ export class GerdanDocument {
             .text(`by @${user.username}`)
             .text('generated on Gerdan.js');
 
-        // this.drawStatistics();
-
         this.addSiteMark();
     }
 
@@ -168,7 +161,7 @@ export class GerdanDocument {
         this.doc
             .fontSize(14)
             .text(`Rows: ${this.statistics.rows}`, textPositionX, textPositionY)
-            .text(`Columns: ${this.statistics.columns}`, textPositionX, textPositionY + 100);
+            .text(`Columns: ${this.statistics.columns}`, textPositionX);
 
         for (const [key, value] of Object.entries(this.statistics.colors)) {
             this.doc.text(`${this.charactersSet[key]} - ${value.color} - ${value.count}`);
