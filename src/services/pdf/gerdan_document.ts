@@ -1,11 +1,12 @@
-import { createWriteStream } from 'fs';
-import { readFile } from 'fs/promises';
+import { createWriteStream, existsSync } from 'fs';
+import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import * as PDFDocument from 'pdfkit';
 import { cwd } from 'process';
 import { Gerdan } from 'src/database/models/gerdan.model';
 import { Pixel } from 'src/database/models/pixel.model';
 import { User } from 'src/database/models/user.model';
+import { sleep } from 'src/utils/sleep';
 
 type NewDocumentMetaData = {
     Title: string;
@@ -72,8 +73,18 @@ export class GerdanDocument {
     }
 
     public async getFile(): Promise<Buffer> {
-        const file = await readFile(this.filePath);
-        // await unlink(this.filePath);
+        const ONE_MINUTE_IN_MILLISECONDS = 60000;
+        const SLEEP_TIME = 100;
+        const maxAttempts = ONE_MINUTE_IN_MILLISECONDS / SLEEP_TIME;
+        let file: Buffer;
+
+        for (let attempts = 0; attempts < maxAttempts; attempts++) {
+            if (!existsSync(this.filePath)) { await sleep(SLEEP_TIME); continue; }
+            file = await readFile(this.filePath);
+            break;
+        }
+
+        await unlink(this.filePath);
         return file;
     }
 
@@ -112,8 +123,6 @@ export class GerdanDocument {
 
             grid.get(y).set(x, data);
         }
-
-        console.log(Object.fromEntries(grid));
         return grid;
     }
 
