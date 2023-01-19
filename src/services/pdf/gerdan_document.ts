@@ -1,5 +1,5 @@
 import { createWriteStream } from 'fs';
-import { readFile, unlink } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
 import * as PDFDocument from 'pdfkit';
 import { cwd } from 'process';
@@ -17,9 +17,10 @@ type PDFPixel = {
     index: number;
     indexColor: string;
 };
-type Grid = PDFPixel[][];
+type Grid = Map<number, Map<number, PDFPixel>>;
 
 type ColorStatics = { color: string, count: number; }[];
+
 type Statistics = {
     rows: number,
     columns: number,
@@ -56,8 +57,9 @@ export class GerdanDocument {
         this.filePath = join(cwd(), 'temp', `${user.username}-${gerdan.name}.pdf`);
         this.denominator = this.calculateDenominator(gerdan.width);
         this.pixelSize = this.calculatePixelSize(gerdan.width);
-        this.grid = this.createGridFromPixels(gerdan.pixels);
-        this.statistics = this.collectStatistic(this.grid);
+        this.grid = this.createGridMapFromPixels(gerdan.pixels);
+
+        // this.statistics = this.collectStatistic(this.grid);
 
         this.createDocument({ Title: gerdan.name, Author: user.username });
         this.addInfoPage(user, gerdan);
@@ -95,42 +97,47 @@ export class GerdanDocument {
         this.doc.pipe(createWriteStream(this.filePath));
     }
 
-    private createGridFromPixels(pixels: Pixel[]): Grid {
-        const grid: Pick<Pixel, 'color' | 'index' | 'indexColor'>[][] = [];
+    private createGridMapFromPixels(pixels: Pixel[]): Grid {
+        const grid: Grid = new Map();
         for (const pixel of pixels) {
             const x = pixel.x / this.denominator;
             const y = pixel.y / this.denominator;
-            if (!grid[y]) grid[y] = [];
-            grid[y][x] = {
+            if (!grid.has(y)) grid.set(y, new Map());
+
+            const data = {
                 color: pixel.color,
                 index: pixel.index,
                 indexColor: pixel.indexColor,
             };
+
+            grid.get(y).set(x, data);
         }
+
+        console.log(Object.fromEntries(grid));
         return grid;
     }
 
-    private collectStatistic(grid: Grid): Statistics {
-        const statistics = {
-            rows: 0,
-            columns: 0,
-            colors: []
-        };
+    // private collectStatistic(grid: Grid): Statistics {
+    //     const statistics = {
+    //         rows: 0,
+    //         columns: 0,
+    //         colors: []
+    //     };
 
-        for (const line of grid) {
-            let pixelsInARow = 0;
-            for (const pixel of line) {
-                if (!pixel?.index) break;
-                if (!statistics.colors[pixel.index]) statistics.colors[pixel.index] = { color: pixel.color, count: 1 };
-                statistics.colors[pixel.index].count++;
-                pixelsInARow++;
-            }
-            statistics.rows++;
-            if (statistics.columns < pixelsInARow) statistics.columns = pixelsInARow;
-        }
+    //     for (const line of grid) {
+    //         let pixelsInARow = 0;
+    //         for (const pixel of line) {
+    //             if (!pixel?.index) break;
+    //             if (!statistics.colors[pixel.index]) statistics.colors[pixel.index] = { color: pixel.color, count: 1 };
+    //             statistics.colors[pixel.index].count++;
+    //             pixelsInARow++;
+    //         }
+    //         statistics.rows++;
+    //         if (statistics.columns < pixelsInARow) statistics.columns = pixelsInARow;
+    //     }
 
-        return statistics;
-    }
+    //     return statistics;
+    // }
 
     private addInfoPage(user: User, gerdan: Gerdan) {
         this.doc
@@ -140,8 +147,8 @@ export class GerdanDocument {
             .fontSize(42)
             .text(`by @${user.username}`)
             .text('generated on Gerdan.js');
-        
-        this.drawStatistics();
+
+        // this.drawStatistics();
 
         this.addSiteMark();
     }
@@ -152,7 +159,7 @@ export class GerdanDocument {
         this.doc
             .fontSize(14)
             .text(`Rows: ${this.statistics.rows}`, textPositionX, textPositionY)
-            .text(`Columns: ${this.statistics.columns}`, textPositionX, textPositionY+100);
+            .text(`Columns: ${this.statistics.columns}`, textPositionX, textPositionY + 100);
 
         for (const [key, value] of Object.entries(this.statistics.colors)) {
             this.doc.text(`${this.charactersSet[key]} - ${value.color} - ${value.count}`);
@@ -160,38 +167,71 @@ export class GerdanDocument {
     }
 
     private drawGrid(grid: Grid) {
-        const gridLines = grid.length - 1;
+        const gridLines = grid.size;
         const maxPageHeight = ~~((this.docSize.height - this.docSize.marginTop - this.docSize.marginBottom) / this.pixelSize);
         const pages = ~~(gridLines / maxPageHeight) + 1;
         let pageNumber = 1;
-        let k = 0;
 
         while (pageNumber <= pages) {
             this.doc
                 .addPage()
                 .fontSize(7);
-            for (let y = 0; y < maxPageHeight; y++) {
-                for (let x = 0; x < grid[y].length; x++) {
-                    if (!grid[y + k]) continue;
+
+            for (const [y, row] of grid) {
+                for (const [x, cell] of row) {
                     this.drawPixel(
                         this.pixelPositionX(x),
                         this.pixelPositionY(y),
-                        grid[y + k][x]?.color
+                        cell.color
                     );
                     this.writeIndex(
                         this.indexPosition(this.pixelPositionX(x)),
                         this.indexPosition(this.pixelPositionY(y)),
-                        grid[y + k][x]?.index,
-                        grid[y + k][x]?.indexColor
+                        cell.index,
+                        cell.indexColor
                     );
                 }
             }
+
             this.addPageNumber(pageNumber, pages);
             this.addSiteMark();
             pageNumber++;
-            k += maxPageHeight;
         }
     }
+
+    // private drawGrid(grid: Grid) {
+    //     const gridLines = grid.length - 1;
+    //     const maxPageHeight = ~~((this.docSize.height - this.docSize.marginTop - this.docSize.marginBottom) / this.pixelSize);
+    //     const pages = ~~(gridLines / maxPageHeight) + 1;
+    //     let pageNumber = 1;
+    //     let k = 0;
+
+    //     while (pageNumber <= pages) {
+    //         this.doc
+    //             .addPage()
+    //             .fontSize(7);
+    //         for (let y = 0; y < maxPageHeight; y++) {
+    //             for (let x = 0; x < grid[y].length; x++) {
+    //                 if (!grid[y + k]) continue;
+    //                 this.drawPixel(
+    //                     this.pixelPositionX(x),
+    //                     this.pixelPositionY(y),
+    //                     grid[y + k][x]?.color
+    //                 );
+    //                 this.writeIndex(
+    //                     this.indexPosition(this.pixelPositionX(x)),
+    //                     this.indexPosition(this.pixelPositionY(y)),
+    //                     grid[y + k][x]?.index,
+    //                     grid[y + k][x]?.indexColor
+    //                 );
+    //             }
+    //         }
+    //         this.addPageNumber(pageNumber, pages);
+    //         this.addSiteMark();
+    //         pageNumber++;
+    //         k += maxPageHeight;
+    //     }
+    // }
 
     private drawPixel(x: number, y: number, color: string) {
         this.doc

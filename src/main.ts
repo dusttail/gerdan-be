@@ -12,6 +12,8 @@ async function bootstrap() {
     const configService = <ConfigService>app.get(ConfigService);
     const port = parseInt(configService.get('PORT'));
 
+    app.enableCors();
+
     app.use(json({ limit: '10mb' }));
 
     app.setGlobalPrefix('api');

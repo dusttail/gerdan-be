@@ -83,7 +83,9 @@ export class GerdansController {
         const gerdan = await this.gerdansService.getDetails(id, transaction);
         const user = await this.usersService.findUserById(session.userId, transaction);
 
-        const file = await new GerdanDocument(gerdan, user).getFile();
+
+        const doc = new GerdanDocument(gerdan, user);
+        const file = await doc.getFile();
         res.status(201).send(file);
     }
 

@@ -36,6 +36,12 @@ export class Gerdan extends BaseModel {
     height: number;
 
     @Column({
+        type: DataType.INTEGER,
+        allowNull: false,
+    })
+    pixelSize: number;
+
+    @Column({
         type: DataType.CHAR(7),
         allowNull: false,
     })

@@ -36,10 +36,6 @@ module.exports = {
                 type: Sequelize.DataTypes.CHAR(7),
                 allowNull: false
             },
-            statistics: {
-                type: Sequelize.DataTypes.TEXT,
-                allowNull: false,
-            }
         });
     },
 
