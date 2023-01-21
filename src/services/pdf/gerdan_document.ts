@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createWriteStream, existsSync, unlinkSync } from 'fs';
-import { readFile } from 'fs/promises';
+import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import * as PDFDocument from 'pdfkit';
 import { cwd } from 'process';
@@ -236,7 +236,7 @@ export class GerdanDocument {
             break;
         }
 
-        // await unlink(this.filePath);
+        await unlink(this.filePath);
         return file;
     }
 
