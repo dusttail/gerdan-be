@@ -1,10 +1,10 @@
-import { createWriteStream, existsSync } from 'fs';
-import { readFile, unlink } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import { createWriteStream, existsSync, unlinkSync } from 'fs';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
 import * as PDFDocument from 'pdfkit';
 import { cwd } from 'process';
 import { Gerdan } from 'src/database/models/gerdan.model';
-import { Pixel } from 'src/database/models/pixel.model';
 import { User } from 'src/database/models/user.model';
 import { sleep } from 'src/utils/sleep';
 
@@ -18,7 +18,7 @@ type PDFPixel = {
     index: number;
     indexColor: string;
 };
-type Grid = Map<number, Map<number, PDFPixel>>;
+type PixelsGrid = PDFPixel[][];
 
 type ColorStatics = { color: string, count: number; }[];
 
@@ -29,9 +29,9 @@ type Statistics = {
 };
 
 export class GerdanDocument {
-    private readonly BLACK = '#000000';
-    private readonly WHITE = '#FFFFFF';
-    private readonly EMPTY = ' ';
+    private readonly BLACK = '#000000' as const;
+    private readonly WHITE = '#FFFFFF' as const;
+    private readonly EMPTY_INDEX = ' ' as const;
     private readonly charactersSet = [
         'Ø', '1', '2', '3', '4',
         '5', '6', '7', '8', '9',
@@ -39,7 +39,7 @@ export class GerdanDocument {
         'F', 'G', 'H', 'J', 'K',
         'L', 'M', 'N', 'O', 'P',
         'R', 'S', 'T', 'U', 'V',
-        'W', 'X', 'Y', 'Z'];
+        'W', 'X', 'Y', 'Z'] as const;
     private readonly docSize = {
         width: 595.28,
         height: 841.89,
@@ -47,25 +47,181 @@ export class GerdanDocument {
         marginTop: 58,
         marginRight: 55.28,
         marginBottom: 57.98
-    };
-    private filePath = '';
+    } as const;
+    private readonly printSize = {
+        width: this.docSize.width - this.docSize.marginLeft - this.docSize.marginRight,
+        height: this.docSize.height - this.docSize.marginTop - this.docSize.marginBottom,
+    } as const;
+    private filePath: string;
     private doc: typeof PDFDocument;
-    private pixelSize = 9;
-    private denominator = 1;
-    private readonly grid: Grid;
-    private readonly statistics: Statistics;
+    private backgroundColor: string;
+    private pixelSize: number;
+    private indexSize: number;
+    private height: number;
+    private width: number;
     constructor(gerdan: Gerdan, user: User) {
-        this.filePath = join(cwd(), 'temp', `${user.username}-${gerdan.name}.pdf`);
-        this.denominator = this.calculateDenominator(gerdan.width);
-        this.pixelSize = this.calculatePixelSize(gerdan.width);
-        this.grid = this.createGridMapFromPixels(gerdan.pixels);
-        this.statistics = this.collectStatistic(this.grid);
+        this.filePath = join(cwd(), 'temp', `${user.username}-${gerdan.name}-${randomUUID()}.pdf`);
+        this.backgroundColor = gerdan.backgroundColor || this.WHITE;
+        this.height = gerdan.height;
+        this.width = gerdan.width;
+        this.pixelSize = this.calculatePixelsSize(gerdan);
+        this.indexSize = this.calculateIndexesSize(this.pixelSize);
+        const pixelsGrid = this.mapPixels(gerdan);
+        const statistics = this.collectStatistic(pixelsGrid);
 
-        this.createDocument({ Title: gerdan.name, Author: user.username });
-        this.addInfoPage(user, gerdan);
-        this.drawStatistics();
-        this.drawGrid(this.grid);
-        this.closeDocument();
+        try {
+            this.createDocument({ Title: gerdan.name, Author: user.username });
+            this.addInfoPage(user, gerdan);
+            this.drawStatistics(statistics);
+            this.drawPixelsGrid(pixelsGrid);
+            this.closeDocument();
+        } catch (error) {
+            this.closeDocument();
+            unlinkSync(this.filePath);
+            throw error;
+        }
+    }
+
+    private drawStatistics(statistics: Statistics) {
+        const textPositionX = this.docSize.width - this.docSize.marginLeft - 100;
+        let textPositionY = 400;
+        const textSize = 14;
+        const space = 18;
+        this.doc
+            .fontSize(textSize);
+        textPositionY += space;
+        this.doc.text(`Rows: ${statistics.rows}`, textPositionX, textPositionY);
+        textPositionY += space;
+        this.doc.text(`Columns: ${statistics.columns}`, textPositionX, textPositionY);
+
+        for (const [key, value] of Object.entries(statistics.colors)) {
+            textPositionY += space;
+            this.doc.text(`${this.charactersSet[key]} - ${value.color} - ${value.count}`, textPositionX, textPositionY);
+            this.drawPixel(
+                textPositionX - this.pixelSize,
+                textPositionY - (space - textSize) / 2,
+                value.color,
+                textSize
+            );
+        }
+    }
+
+    private collectStatistic(pixelsGrid: PixelsGrid): Statistics {
+        const statistics = {
+            rows: this.height,
+            columns: this.width,
+            colors: []
+        };
+
+        for (let y = 0; y < this.height; y++) {
+            let pixelsInARow = 0;
+            for (let x = 0; x < this.width; x++) {
+                if (!pixelsGrid[y][x].index) continue;
+                if (!statistics.colors[pixelsGrid[y][x].index])
+                    statistics.colors[pixelsGrid[y][x].index] = { color: pixelsGrid[y][x].color, count: 0 };
+                statistics.colors[pixelsGrid[y][x].index].count++;
+                pixelsInARow++;
+            }
+            statistics.rows++;
+            if (statistics.columns < pixelsInARow) statistics.columns = pixelsInARow;
+        }
+
+        return statistics;
+    }
+
+    private drawPixelsGrid(pixelsGrid: PixelsGrid) {
+        const pixelsPerPage = ~~(this.printSize.height / this.pixelSize);
+        const totalPages = Math.floor(this.height / pixelsPerPage);
+        let page = -1;
+        for (let y = 0; y < this.height; y++) {
+            if (!(y % pixelsPerPage)) {
+                page++;
+                this.doc
+                    .addPage()
+                    .fontSize(this.indexSize);
+                this.addPageNumber(page, totalPages);
+                this.addSiteMark();
+            }
+            for (let x = 0; x < this.width; x++) {
+                const color = pixelsGrid[y][x].color;
+                this.drawPixel(
+                    this.pixelPositionX(x),
+                    this.pixelPositionY(y - pixelsPerPage * page),
+                    color
+                );
+                if (color !== this.backgroundColor)
+                    this.writeIndex(
+                        this.indexPosition(this.pixelPositionX(x)),
+                        this.indexPosition(this.pixelPositionY(y - pixelsPerPage * page)),
+                        pixelsGrid[y][x].index,
+                        pixelsGrid[y][x].indexColor
+                    );
+            }
+        }
+    }
+
+    private addPageNumber(currentPage: number, totalPages: number) {
+        this.doc
+            .fontSize(14)
+            .fillColor(this.BLACK)
+            .text(`${currentPage + 1} / ${totalPages + 1}`,
+                500,
+                800
+            );
+    }
+
+    private drawPixel(x: number, y: number, color: string, size = this.pixelSize) {
+        this.doc
+            .rect(x, y, size, size)
+            .fillAndStroke(color, this.BLACK);
+    }
+
+    private writeIndex(x: number, y: number, index: number, color: string) {
+        this.doc
+            .fillColor(color ?? this.BLACK)
+            .text(
+                index ? this.charactersSet[index] : this.EMPTY_INDEX,
+                this.indexPosition(x),
+                this.indexPosition(y),
+                {
+                    lineBreak: false,
+                });
+    }
+
+    private indexPosition(pos: number): number {
+        return pos + this.pixelSize / 7;
+    }
+
+    private pixelPositionX(x: number): number {
+        return x * this.pixelSize + this.docSize.marginLeft;
+    }
+
+    private pixelPositionY(y: number): number {
+        return y * this.pixelSize + this.docSize.marginTop;
+    }
+
+    private mapPixels(gerdan: Gerdan): PixelsGrid {
+        const grid = [];
+        for (let y = 0; y < gerdan.height; y++) {
+            if (!grid[y]) grid[y] = [];
+            for (let x = 0; x < gerdan.width; x++) {
+                grid[y][x] = {
+                    color: this.backgroundColor,
+                    index: 0,
+                    indexColor: this.WHITE,
+                };
+            }
+        }
+
+        for (const pixel of gerdan.pixels) {
+            grid[pixel.y / gerdan.pixelSize][pixel.x / gerdan.pixelSize] = {
+                color: pixel.color,
+                index: pixel.index,
+                indexColor: pixel.indexColor,
+            };
+        }
+
+        return grid;
     }
 
     public async getFile(): Promise<Buffer> {
@@ -80,12 +236,39 @@ export class GerdanDocument {
             break;
         }
 
-        await unlink(this.filePath);
+        // await unlink(this.filePath);
         return file;
     }
 
     private closeDocument() {
         this.doc.end();
+    }
+
+    private addSiteMark() {
+        const siteMark = process.env.SITE_MARK as string;
+        const markWidth = this.doc
+            .fontSize(14)
+            .widthOfString(siteMark);
+
+        this.doc
+            .fontSize(14)
+            .fillColor(this.BLACK)
+            .text('Gerdan.js',
+                this.docSize.width / 2 - markWidth / 2,
+                800
+            );
+    }
+
+    private addInfoPage(user: User, gerdan: Gerdan) {
+        this.doc
+            .addPage()
+            .fontSize(60)
+            .text(gerdan.name, this.docSize.marginRight, 200)
+            .fontSize(42)
+            .text(`by @${user.username}`)
+            .text('generated on Gerdan.js');
+
+        this.addSiteMark();
     }
 
     private createDocument(metadata: NewDocumentMetaData) {
@@ -104,207 +287,11 @@ export class GerdanDocument {
         this.doc.pipe(createWriteStream(this.filePath));
     }
 
-    private createGridMapFromPixels(pixels: Pixel[]): Grid {
-        const grid: Grid = new Map();
-        for (const pixel of pixels) {
-            const x = pixel.x / this.denominator;
-            const y = pixel.y / this.denominator;
-            if (!grid.has(y)) grid.set(y, new Map());
-
-            const data = {
-                color: pixel.color,
-                index: pixel.index,
-                indexColor: pixel.indexColor,
-            };
-
-            grid.get(y).set(x, data);
-        }
-        return grid;
+    private calculateIndexesSize(pixelSize: number) {
+        return pixelSize * .8;
     }
 
-    private collectStatistic(grid: Grid): Statistics {
-        const statistics = {
-            rows: 0,
-            columns: 0,
-            colors: []
-        };
-
-        for (const [_x, row] of grid) {
-            let pixelsInARow = 0;
-            for (const [_y, cell] of row) {
-                if (!statistics.colors[cell.index]) statistics.colors[cell.index] = { color: cell.color, count: 1 };
-                statistics.colors[cell.index].count++;
-                pixelsInARow++;
-            }
-            statistics.rows++;
-            if (statistics.columns < pixelsInARow) statistics.columns = pixelsInARow;
-        }
-
-        return statistics;
-    }
-
-    private addInfoPage(user: User, gerdan: Gerdan) {
-        this.doc
-            .addPage()
-            .fontSize(60)
-            .text(gerdan.name, this.docSize.marginRight, 200)
-            .fontSize(42)
-            .text(`by @${user.username}`)
-            .text('generated on Gerdan.js');
-
-        this.addSiteMark();
-    }
-
-    private drawStatistics() {
-        const textPositionX = this.docSize.width - this.docSize.marginLeft - 100;
-        const textPositionY = 400;
-        this.doc
-            .fontSize(14)
-            .text(`Rows: ${this.statistics.rows}`, textPositionX, textPositionY)
-            .text(`Columns: ${this.statistics.columns}`, textPositionX);
-
-        for (const [key, value] of Object.entries(this.statistics.colors)) {
-            this.doc.text(`${this.charactersSet[key]} - ${value.color} - ${value.count}`);
-        }
-    }
-
-    private drawGrid(grid: Grid) {
-        const gridLines = grid.size;
-        const maxPageHeight = ~~((this.docSize.height - this.docSize.marginTop - this.docSize.marginBottom) / this.pixelSize);
-        const pages = ~~(gridLines / maxPageHeight) + 1;
-        let pageNumber = 1;
-
-        while (pageNumber <= pages) {
-            this.doc
-                .addPage()
-                .fontSize(7);
-
-            for (const [y, row] of grid) {
-                for (const [x, cell] of row) {
-                    this.drawPixel(
-                        this.pixelPositionX(x),
-                        this.pixelPositionY(y),
-                        cell.color
-                    );
-                    this.writeIndex(
-                        this.indexPosition(this.pixelPositionX(x)),
-                        this.indexPosition(this.pixelPositionY(y)),
-                        cell.index,
-                        cell.indexColor
-                    );
-                }
-            }
-
-            this.addPageNumber(pageNumber, pages);
-            this.addSiteMark();
-            pageNumber++;
-        }
-    }
-
-    // private drawGrid(grid: Grid) {
-    //     const gridLines = grid.length - 1;
-    //     const maxPageHeight = ~~((this.docSize.height - this.docSize.marginTop - this.docSize.marginBottom) / this.pixelSize);
-    //     const pages = ~~(gridLines / maxPageHeight) + 1;
-    //     let pageNumber = 1;
-    //     let k = 0;
-
-    //     while (pageNumber <= pages) {
-    //         this.doc
-    //             .addPage()
-    //             .fontSize(7);
-    //         for (let y = 0; y < maxPageHeight; y++) {
-    //             for (let x = 0; x < grid[y].length; x++) {
-    //                 if (!grid[y + k]) continue;
-    //                 this.drawPixel(
-    //                     this.pixelPositionX(x),
-    //                     this.pixelPositionY(y),
-    //                     grid[y + k][x]?.color
-    //                 );
-    //                 this.writeIndex(
-    //                     this.indexPosition(this.pixelPositionX(x)),
-    //                     this.indexPosition(this.pixelPositionY(y)),
-    //                     grid[y + k][x]?.index,
-    //                     grid[y + k][x]?.indexColor
-    //                 );
-    //             }
-    //         }
-    //         this.addPageNumber(pageNumber, pages);
-    //         this.addSiteMark();
-    //         pageNumber++;
-    //         k += maxPageHeight;
-    //     }
-    // }
-
-    private drawPixel(x: number, y: number, color: string) {
-        this.doc
-            .rect(x, y, this.pixelSize, this.pixelSize)
-            .fillAndStroke(color ?? this.WHITE, this.BLACK);
-    }
-
-    private writeIndex(x: number, y: number, index: number, color: string) {
-        this.doc
-            .fillColor(color ?? this.BLACK)
-            .text(
-                index ? this.charactersSet[index] : this.EMPTY,
-                this.indexPosition(x),
-                this.indexPosition(y),
-                {
-                    lineBreak: false,
-                });
-    }
-
-    private pixelPositionX(x: number): number {
-        return x * this.pixelSize + this.docSize.marginLeft;
-    }
-
-    private pixelPositionY(y: number): number {
-        return y * this.pixelSize + this.docSize.marginTop;
-    }
-
-    private indexPosition(pos: number): number {
-        return pos + this.pixelSize / 4;
-    }
-
-    private calculateDenominator(width: number): number {
-        const printSize = this.docSize.width - this.docSize.marginLeft - this.docSize.marginRight;
-        const gcd = this.gcd(width, printSize);
-        const pixelCount = printSize / gcd - gcd;
-        return width / pixelCount;
-    }
-
-    private calculatePixelSize(width: number): number {
-        const printSize = this.docSize.width - this.docSize.marginLeft - this.docSize.marginRight;
-        const gcd = this.gcd(width, printSize);
-        const pixelCount = printSize / gcd - gcd;
-        return ~~(printSize / pixelCount);
-    }
-
-    private gcd(a: number, b: number): number {
-        return b === 0 ? a : this.gcd(b, a % b);
-    }
-
-    private addSiteMark() {
-        const siteMark = process.env.SITE_MARK as string;
-        const markWidth = this.doc
-            .fontSize(14)
-            .widthOfString(siteMark);
-
-        this.doc
-            .fontSize(14)
-            .fillColor(this.BLACK)
-            .text('Gerdan.js',
-                this.docSize.width / 2 - markWidth / 2,
-                800
-            );
-    }
-
-    private addPageNumber(currentPage: number, totalPages: number) {
-        this.doc
-            .fontSize(14)
-            .fillColor(this.BLACK)
-            .text(`${currentPage}/${totalPages}`,
-                500,
-                800
-            );
+    private calculatePixelsSize(gerdan: Gerdan): number {
+        return ~~(this.printSize.width / gerdan.width);
     }
 }
