@@ -1,18 +1,34 @@
 import { Injectable } from '@nestjs/common';
-import { readFileSync } from 'fs';
+import { randomUUID } from 'crypto';
+import { existsSync } from 'fs';
+import { readFile, unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { cwd } from 'process';
-
-type extensions = 'pdf' | 'png';
+import { sleep } from 'src/utils/sleep';
 
 @Injectable()
 export class FileStorageService {
-    getFilePath(userId: ID, filename: string, extension: extensions): string {
-        return join(cwd(), 'database', 'files', `user_id_${userId}`, extension, `user_id_${userId}_${filename}.${extension}`);
-
+    public prepareFilePath(fileName: string, extension = 'txt'): string {
+        return join(cwd(), 'temp', `${fileName}-${randomUUID()}.${extension}`);
     }
 
-    readFile(userId: ID, filename: string, extension: extensions): Buffer {
-        return readFileSync(this.getFilePath(userId, filename, extension));
+    public async extractFile(path: string): Promise<Buffer> {
+        const ONE_MINUTE_IN_MILLISECONDS = 60000;
+        const SLEEP_TIME = 100;
+        const maxAttempts = ONE_MINUTE_IN_MILLISECONDS / SLEEP_TIME;
+        let file: Buffer;
+
+        for (let attempts = 0; attempts < maxAttempts; attempts++) {
+            if (!existsSync(path)) { await sleep(SLEEP_TIME); continue; }
+            file = await readFile(path);
+            break;
+        }
+
+        await unlink(path);
+        return file;
+    }
+
+    public async saveFile(path: string, buffer: Buffer) {
+        await writeFile(path, buffer);
     }
 }

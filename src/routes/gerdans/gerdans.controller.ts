@@ -12,7 +12,7 @@ import { ValidateSchema } from 'src/common/validate.decorator';
 import { SequelizeTransaction } from 'src/database/common/transaction.decorator';
 import { TransactionInterceptor } from 'src/database/common/transaction.interceptor';
 import { FileStorageService } from 'src/services/file_storage/file_storage.service';
-import { GerdanDocument } from 'src/services/pdf/gerdan_document';
+import { createGerdanPreview, generateGerdanPDF } from 'src/services/gerdan/gerdan';
 import { UsersService } from '../users/users.service';
 import { GerdanInput } from './api/gerdan.input';
 import { GerdanOutput } from './api/gerdan.output';
@@ -83,9 +83,9 @@ export class GerdansController {
         const gerdan = await this.gerdansService.getDetails(id, transaction);
         const user = await this.usersService.findUserById(session.userId, transaction);
 
-
-        const doc = new GerdanDocument(gerdan, user);
-        const file = await doc.getFile();
+        const filePath = this.fsService.prepareFilePath(`${user.username}-${gerdan.name}`, 'pdf');
+        generateGerdanPDF(gerdan, user, filePath);
+        const file = await this.fsService.extractFile(filePath);
         res.status(201).send(file);
     }
 
@@ -99,11 +99,11 @@ export class GerdansController {
         @UserSession() session: UserSessionData,
         @Body() body: GerdanInput
     ): Promise<GerdanDto> {
-
-        // TODO: порахувати статистику під час створення гердану
-        // Генерувати превью
         const newGerdan = await this.gerdansService.create(body, session.userId, transaction);
         const gerdan = await this.gerdansService.getDetails(newGerdan.id, transaction);
+        const filePath = this.fsService.prepareFilePath(`${gerdan.name}`, 'jpg');
+        const preview = createGerdanPreview(gerdan);
+
         return new GerdanDto(gerdan);
     }
 
@@ -122,6 +122,8 @@ export class GerdansController {
         if (!existedGerdan) throw new NotFoundException(ERROR_MESSAGES.gerdans.not_found);
         await this.gerdansService.update(existedGerdan, body, transaction);
         const gerdan = await this.gerdansService.getDetails(id, transaction);
+        const filePath = this.fsService.prepareFilePath(`${gerdan.name}`, 'jpg');
+        const preview = createGerdanPreview(gerdan);
 
         return new GerdanDto(gerdan);
     }
