@@ -8,4 +8,7 @@ export const ERROR_MESSAGES = Object.freeze({
     gerdans: {
         not_found: 'Gerdan not found'
     },
+    file: {
+        not_found: 'File not found'
+    }
 });

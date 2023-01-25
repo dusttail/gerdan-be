@@ -1,11 +1,13 @@
 import { BelongsTo, Column, DataType, ForeignKey, HasMany, Scopes, Table } from 'sequelize-typescript';
 import { BaseModel } from '../common/base.model';
 import { commonScopes } from '../common/common.scopes';
+import { File } from './file.model';
 import { Pixel } from './pixel.model';
 import { User } from './user.model';
 
 @Scopes(() => Object.assign({
     withAuthor: () => ({ include: { model: User, required: true } }),
+    withPreview: () => ({ include: { model: File, required: false } }),
     byAuthorId: (userId) => ({ where: { userId } })
 }, commonScopes))
 @Table
@@ -16,6 +18,10 @@ export class Gerdan extends BaseModel {
         allowNull: false,
     })
     userId: ID;
+
+    @ForeignKey(() => File)
+    @Column(DataType.UUID)
+    previewId: ID;
 
     @Column({
         type: DataType.STRING,
@@ -53,4 +59,6 @@ export class Gerdan extends BaseModel {
     @BelongsTo(() => User)
     author: User;
 
+    @BelongsTo(() => File)
+    preview: File;
 }

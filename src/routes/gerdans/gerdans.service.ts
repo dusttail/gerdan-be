@@ -96,7 +96,7 @@ export class GerdansService {
     }
 
     async getDetails(gerdanId: ID, transaction?: Transaction): Promise<Gerdan> {
-        const gerdan = await this.gerdanModel.scope(['withAuthor']).findByPk(gerdanId, { transaction });
+        const gerdan = await this.gerdanModel.scope(['withAuthor', 'withPreview']).findByPk(gerdanId, { transaction });
         gerdan.pixels = await this.getRawPixels(gerdan.id, transaction);
         return gerdan;
     }
@@ -108,6 +108,7 @@ export class GerdansService {
     async getGerdansForUser(records: number, userId: ID, id?: ID, transaction?: Transaction): Promise<Gerdan[]> {
         return await this.gerdanModel.scope([
             'withAuthor',
+            'withPreview',
             { method: ['byAuthorId', userId] },
             { method: ['pagination', records, id] }
         ]).findAll({ transaction, subQuery: false });

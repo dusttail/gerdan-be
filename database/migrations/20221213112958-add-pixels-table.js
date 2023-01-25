@@ -10,10 +10,6 @@ module.exports = {
                 unique: true,
                 defaultValue: Sequelize.DataTypes.UUIDV4
             },
-            gerdanId: {
-                type: Sequelize.DataTypes.INTEGER,
-                allowNull: false,
-            },
             x: {
                 type: Sequelize.DataTypes.INTEGER,
                 allowNull: false

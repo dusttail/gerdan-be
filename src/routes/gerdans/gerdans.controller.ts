@@ -11,8 +11,9 @@ import { ERROR_MESSAGES } from 'src/common/error_messages';
 import { ValidateSchema } from 'src/common/validate.decorator';
 import { SequelizeTransaction } from 'src/database/common/transaction.decorator';
 import { TransactionInterceptor } from 'src/database/common/transaction.interceptor';
-import { FileStorageService } from 'src/services/file_storage/file_storage.service';
 import { createGerdanPreview, generateGerdanPDF } from 'src/services/gerdan/gerdan';
+import { FileStorageHelper } from 'src/utils/file_storage.helper';
+import { BucketService } from '../bucket/bucket.service';
 import { UsersService } from '../users/users.service';
 import { GerdanInput } from './api/gerdan.input';
 import { GerdanOutput } from './api/gerdan.output';
@@ -29,7 +30,7 @@ export class GerdansController {
     constructor(
         private readonly gerdansService: GerdansService,
         private readonly usersService: UsersService,
-        private readonly fsService: FileStorageService,
+        private readonly bucketService: BucketService,
     ) { }
 
     @Get()
@@ -83,9 +84,9 @@ export class GerdansController {
         const gerdan = await this.gerdansService.getDetails(id, transaction);
         const user = await this.usersService.findUserById(session.userId, transaction);
 
-        const filePath = this.fsService.prepareFilePath(`${user.username}-${gerdan.name}`, 'pdf');
+        const filePath = FileStorageHelper.prepareFilePathToTempFolder(`${user.username}-${gerdan.name}`, 'pdf');
         generateGerdanPDF(gerdan, user, filePath);
-        const file = await this.fsService.extractFile(filePath);
+        const file = await FileStorageHelper.extractFile(filePath);
         res.status(201).send(file);
     }
 
@@ -101,8 +102,11 @@ export class GerdansController {
     ): Promise<GerdanDto> {
         const newGerdan = await this.gerdansService.create(body, session.userId, transaction);
         const gerdan = await this.gerdansService.getDetails(newGerdan.id, transaction);
-        const filePath = this.fsService.prepareFilePath(`${gerdan.name}`, 'jpg');
+
+        if (gerdan?.previewId) await this.bucketService.destroyFile(gerdan.previewId, transaction);
         const preview = createGerdanPreview(gerdan);
+        const file = await this.bucketService.saveFile(preview, 'jpg', transaction);
+        await gerdan.update({ previewId: file.id }, { transaction });
 
         return new GerdanDto(gerdan);
     }
@@ -122,8 +126,11 @@ export class GerdansController {
         if (!existedGerdan) throw new NotFoundException(ERROR_MESSAGES.gerdans.not_found);
         await this.gerdansService.update(existedGerdan, body, transaction);
         const gerdan = await this.gerdansService.getDetails(id, transaction);
-        const filePath = this.fsService.prepareFilePath(`${gerdan.name}`, 'jpg');
+
+        if (gerdan?.previewId) await this.bucketService.destroyFile(gerdan.previewId, transaction);
         const preview = createGerdanPreview(gerdan);
+        const file = await this.bucketService.saveFile(preview, 'jpg', transaction);
+        await gerdan.update({ previewId: file.id }, { transaction });
 
         return new GerdanDto(gerdan);
     }
@@ -139,6 +146,7 @@ export class GerdansController {
     ) {
         const existedGerdan = await this.gerdansService.getGerdanByIdForUser(id, session.userId, transaction);
         if (!existedGerdan) throw new NotFoundException(ERROR_MESSAGES.gerdans.not_found);
+        if (existedGerdan?.previewId) await this.bucketService.destroyFile(existedGerdan.previewId, transaction);
         await existedGerdan.destroy({ transaction });
     }
 }
